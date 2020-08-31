@@ -3,6 +3,7 @@
 #include <vector>
 #include <iterator>
 #include <fstream>
+#include <queue>
 #include "src/matplotlibcpp.h" //Graph Library
 
 using namespace std;
@@ -41,14 +42,7 @@ private:
         vector<vector<int> > grid(mapHeight, vector<int>(mapWidth));
         for (int x = 0; x < mapHeight; x++) {
             for (int y = 0; y < mapWidth; y++) {
-                if (map[x][y] == 0) //unkown state
-                    grid[x][y] = 1;
-
-                else if (map[x][y] > 0) //Occupied state
-                    grid[x][y] = 1;
-
-                else //Free state
-                    grid[x][y] = 0;
+                grid[x][y] = map[x][y] >= 0;
             }
         }
 
@@ -108,111 +102,83 @@ void print2DVector(T Vec)
     }
 }
 
+struct Node {
+    std::vector<int> triplet;
+    int priority;
+ 
+    bool operator<(const Node& other) const {
+        return priority > other.priority;
+    }
+};
+
 Planner search(Map map, Planner planner)
 {
-    // Create a closed 2 array filled with 0s and first element 1
-    vector<vector<int> > closed(map.mapHeight, vector<int>(map.mapWidth));
-    closed[planner.start[0]][planner.start[1]] = 1;
+    std::vector<std::vector<int>> expansion_vector(map.mapHeight, std::vector<int>(map.mapWidth, -1));
+    std::vector<std::vector<int>> decision_vector(map.mapHeight, std::vector<int>(map.mapWidth, -1));
 
-    // Create expand array filled with -1
-    vector<vector<int> > expand(map.mapHeight, vector<int>(map.mapWidth, -1));
+    std::priority_queue<Node> nodes_queue;
 
-    // Create action array filled with -1
-    vector<vector<int> > action(map.mapHeight, vector<int>(map.mapWidth, -1));
+    nodes_queue.push({{0, planner.start[0], planner.start[1]}, 
+        map.heuristic[planner.start[0]][planner.start[1]]});
+    
+    int iter_cnt = 0;
+    expansion_vector[planner.start[0]][planner.start[1]] = iter_cnt++;
+    
+    while (not nodes_queue.empty()) {
+        auto node = nodes_queue.top();
+        auto& current_node = node.triplet;
+        nodes_queue.pop();
+        
+        for (size_t i = 0; i < 4; ++i) {
+            const auto& movement = planner.movements[i];
+            std::vector<int> neighbor_node {current_node[0] + planner.cost, 
+                current_node[1] + movement[0],
+                current_node[2] + movement[1]};
+            
+            // if goal reached
+            if (neighbor_node[1] == planner.goal[0] and 
+                neighbor_node[2] == planner.goal[1] ) {
+                    
+                expansion_vector[neighbor_node[1]][neighbor_node[2]] = iter_cnt++;
+                decision_vector[neighbor_node[1]][neighbor_node[2]] = i;
+                //print2DVector(expansion_vector);
+                
+                std::vector<std::vector<string>> policy(map.mapHeight, std::vector<string>(map.mapWidth, "-"));
+                policy[planner.goal[0]][planner.goal[1]] = "*";;
 
-    // Defined the quadruplet values
-    int x = planner.start[0];
-    int y = planner.start[1];
-    int g = 0;
-    int f = g + map.heuristic[x][y];
+                int x_end = planner.goal[0];
+                int y_end = planner.goal[1];
+                int decision = decision_vector[neighbor_node[1]][neighbor_node[2]];
 
-    // Store the expansions
-    vector<vector<int> > open;
-    open.push_back({ f, g, x, y });
-
-    // Flags and Counts
-    bool found = false;
-    bool resign = false;
-    int count = 0;
-
-    int x2;
-    int y2;
-
-    // While I am still searching for the goal and the problem is solvable
-    while (!found && !resign) {
-        // Resign if no values in the open list and you can't expand anymore
-        if (open.size() == 0) {
-            resign = true;
-            cout << "Failed to reach a goal" << endl;
-        }
-        // Keep expanding
-        else {
-            // Remove quadruplets from the open list
-            sort(open.begin(), open.end());
-            reverse(open.begin(), open.end());
-            vector<int> next;
-            // Stored the poped value into next
-            next = open.back();
-            open.pop_back();
-
-            x = next[2];
-            y = next[3];
-            g = next[1];
-
-            // Fill the expand vectors with count
-            expand[x][y] = count;
-            count += 1;
-
-            // Check if we reached the goal:
-            if (x == planner.goal[0] && y == planner.goal[1]) {
-                found = true;
-                //cout << "[" << g << ", " << x << ", " << y << "]" << endl;
-            }
-
-            //else expand new elements
-            else {
-                for (int i = 0; i < planner.movements.size(); i++) {
-                    x2 = x + planner.movements[i][0];
-                    y2 = y + planner.movements[i][1];
-                    if (x2 >= 0 && x2 < map.grid.size() && y2 >= 0 && y2 < map.grid[0].size()) {
-                        if (closed[x2][y2] == 0 and map.grid[x2][y2] == 0) {
-                            int g2 = g + planner.cost;
-                            f = g2 + map.heuristic[x2][y2];
-                            open.push_back({ f, g2, x2, y2 });
-                            closed[x2][y2] = 1;
-                            action[x2][y2] = i;
-                        }
-                    }
+                while (x_end != planner.start[0] and y_end != planner.start[1]) {
+                    planner.path.push_back({x_end, y_end});
+                    auto decision_move = planner.movements[decision];
+                    x_end -= decision_move[0];
+                    y_end -= decision_move[1];
+                    //std::cout << x_end << " " << y_end << "\n";
+                    policy[x_end][y_end] = planner.movements_arrows[decision];
+                    decision = decision_vector[x_end][y_end]; 
                 }
+
+                //print2DVector(current_policy)
+                return planner;
+            }
+            
+            if (neighbor_node[1] >= 0 and neighbor_node[1] < map.mapHeight        // within map bounds
+                and neighbor_node[2] >= 0 and neighbor_node[2] < map.mapWidth     // same
+                and expansion_vector[neighbor_node[1]][neighbor_node[2]] == -1    // not yet visited
+                and map.grid[neighbor_node[1]][neighbor_node[2]] == 0) {          // not an obstacle
+                
+                expansion_vector[neighbor_node[1]][neighbor_node[2]] = iter_cnt++;
+                decision_vector[neighbor_node[1]][neighbor_node[2]] = i;
+                
+                auto new_priority = neighbor_node[0] + map.heuristic[neighbor_node[1]][neighbor_node[2]];
+                nodes_queue.push({std::move(neighbor_node), new_priority});
             }
         }
     }
 
-    // Print the expansion List
-    print2DVector(expand);
-
-    // Find the path with robot orientation
-    vector<vector<string> > policy(map.mapHeight, vector<string>(map.mapWidth, "-"));
-
-    // Going backward
-    x = planner.goal[0];
-    y = planner.goal[1];
-    policy[x][y] = '*';
-
-    while (x != planner.start[0] or y != planner.start[1]) {
-        x2 = x - planner.movements[action[x][y]][0];
-        y2 = y - planner.movements[action[x][y]][1];
-        // Store the  Path in a vector
-        planner.path.push_back({ x2, y2 });
-        policy[x2][y2] = planner.movements_arrows[action[x][y]];
-        x = x2;
-        y = y2;
-    }
-
-    // Print the robot path
-    cout << endl;
-    print2DVector(policy);
-
+    std::cout << "Stuck\n";
     return planner;
 }
 
@@ -240,12 +206,22 @@ void visualization(Map map, Planner planner)
     }
 
     // TODO: Plot start and end states in blue colors using o and * respectively
+    plt::plot({static_cast<double>(planner.start[0])}, 
+        {static_cast<double>(planner.start[1])}, "bo");
 
+    plt::plot({static_cast<double>(planner.goal[0])}, 
+        {static_cast<double>(planner.goal[1])}, "b*");
     
     // TODO: Plot the robot path in blue color using a .
+    for (int i = 0; i < planner.path.size(); i++) {
+        plt::plot({static_cast<double>(planner.path[i][0])}, 
+        {static_cast<double>(planner.path[i][1])}, "b.");
+    }
 
+    std::cout << planner.path.size();
     
     //Save the image and close the plot
+    plt::show();
     plt::save("./Images/Path.png");
     plt::clf();
 }
